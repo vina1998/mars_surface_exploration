@@ -1,0 +1,78 @@
+---
+title: "NASA pls hire me"
+author: "potential NASA employee"
+date: "17/11/2021"
+output: html_document
+---
+first step: load libraries and image to be analysed 
+```{r,echo=false}
+library(purrr)
+library(tidyverse)
+library(imager)
+
+rochette=load.image("https://mars.nasa.gov/system/resources/detail_files/26227_PIA24839_Main_stretched-web.jpg")
+
+```
+
+quick plot of image and dave as dataframe
+```{r}
+plot(rochette)
+df_rochette <-as.data.frame(rochette,wide="c") %>% mutate(rgb.val=rgb(c.1,c.2,c.3))
+ggplot()  + geom_raster(data=df_rochette, aes(x=x, y=y, fill=rgb.val)) +scale_fill_identity()+scale_y_reverse()
+
+```
+
+problem is that it is picking up very tiny details, espically becasue rocks have various textures and colours. let's try denoising and using monochrome image.
+
+```{r}
+df_rochette_grey <- as.data.frame(rochette)
+ggplot()  + geom_raster(data=df_rochette_grey, aes(x=x, y=y, fill=value)) +scale_y_reverse()
+
+```
+Thia looks much better at least for the purposes of rock detection. Contrasts are cleaer in this imnage and we can easily tell that values approaching 1 are lighter coloured surfaces (interestingly also demonstrates presence of sunlight which is very useful for our rover when charging is required). let's make two plots: one dmeontrating light and one highlighting shadows. 
+
+```{r}
+max=df_rochette_grey%>% count(value) %>% arrange(desc(value)) %>% filter(n>1000)
+min=df_rochette_grey%>% count(value) %>% arrange(value) %>% filter(n>1000)
+light_surface=df_rochette_grey%>% filter(value==max[1,1])
+dark_surface=df_rochette_grey%>% filter(value==min[1,1])
+ggplot()  + geom_point(data=light_surface, aes(x=x, y=y), colour="yellow")  + geom_point(data=dark_surface, aes(x=x, y=y),colour="black") +scale_y_reverse()
+
+```
+nice! so yellow portions indicate signs of sunligth and black portions indicate darker regions. This really useful to scan a given environemt. However, we still havent had our gps examine which are rocky surfaces, we can try adding geom smooth perhaps. 
+
+```{r}
+ggplot()  + geom_point(data=light_surface, aes(x=x, y=y), colour="yellow")  + geom_point(data=dark_surface, aes(x=x, y=y),colour="black") +scale_y_reverse() + geom_smooth(data=light_surface, method=lm,aes(x=x, y=y), colour="blue",size=4,alpha=7)+ geom_smooth(data=dark_surface,method=lm, aes(x=x, y=y), colour="red",size=4,alpha=7)
+
+```
+
+seems to work, lets say for now, we avoid driving over the area between the blue and red lines. Meaning that any coordinate outside this zone is safe. if we can identify the equation for the regression line than we can identify safe coordinates! 
+```{r}
+m1<-lm(y~x, dark_surface)
+#slope 
+m1[1][[1]][[2]]
+#intercept:
+m1[1][[1]][[1]]
+
+m2<-lm(y~x, light_surface)
+#slope 
+m2[1][[1]][[2]]
+#intercept:
+m2[1][[1]][[1]]
+
+#equation for angle between the twp regression lines. equation is arctan of (slope1-slope2)/ 1 + (slope1*slope2)
+
+degree=atan((m1[1][[1]][[2]]-m2[1][[1]][[2]])/(1+(m1[1][[1]][[2]]*m2[1][[1]][[2]])))
+
+#we have a super small degree which lies in the upper right quadrant, so our rover can move in any other quadrant. 
+degree=degree*-1
+
+if (degree>0 && degree<90) {
+  print("obstacles mostly located in upper right quadrant, take sharp right turn now or turn left")
+}else if (degree==0) {
+  print("obstacles ahead, alternative route not found")
+}
+
+#maybe instead of thinking just about angles, consider intersection point??
+```
+
