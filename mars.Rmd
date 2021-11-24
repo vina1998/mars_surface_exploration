@@ -22,32 +22,103 @@ ggplot()  + geom_raster(data=df_rochette, aes(x=x, y=y, fill=rgb.val)) +scale_fi
 
 ```
 
-problem is that it is picking up very tiny details, espically becasue rocks have various textures and colours. let's try denoising and using monochrome image.
+
+
+```{r}
+kClusters <- 2
+kMeans <- kmeans(df_rochette[, c("c.1", "c.2", "c.3")], centers = kClusters)
+kColours <- rgb(kMeans$centers[kMeans$cluster,])
+
+combined<-cbind(df_rochette,kColours)
+ggplot(data = combined, aes(x = x, y = y)) + 
+  geom_point(colour = kColours) +
+  labs(title = paste("k-Means Clustering of", kClusters, "Colours")) +
+  xlab("x") +
+  ylab("y") + scale_y_reverse()
+```
+```{r}
+maxX=max(combined$x)/2
+maxY=max(combined$y)/2
+
+directions=combined%>% mutate(dir = case_when(x <maxX & y<maxY ~ "northwest",x >maxX & y<maxY ~ "northeast", x <maxX & y>maxY ~ "southwest",x >maxX & y>maxY ~ "southeast")) 
+
+ggplot(data = directions, aes(x = x, y = y)) + geom_point(colour = kColours) +  
+labs(title = paste("k-Means Clustering of", kClusters, "Colours")) +
+xlab("x") +
+ylab("y") + scale_y_reverse()+facet_wrap(~dir)
+
+ggplot(directions,aes(kColours))+geom_bar() +facet_wrap(~dir)
+
+#B29168 reflects light areas and #72502C reflects dark areas 
+
+#in this case it is perhaps safest to head northwest considering that lighter areas ouweight darker regions. indicative of smaller and fewer obstacles. also best for sunlighht. northwest is potentially a danger zone as dark and light cshades are almost equal indicative of large rocks. 
+```
+
+Another perspective:
 
 ```{r}
 df_rochette_grey <- as.data.frame(rochette)
 ggplot()  + geom_raster(data=df_rochette_grey, aes(x=x, y=y, fill=value)) +scale_y_reverse()
 
-```
-Thia looks much better at least for the purposes of rock detection. Contrasts are cleaer in this imnage and we can easily tell that values approaching 1 are lighter coloured surfaces (interestingly also demonstrates presence of sunlight which is very useful for our rover when charging is required). let's make two plots: one dmeontrating light and one highlighting shadows. 
-
-```{r}
 max=df_rochette_grey%>% count(value) %>% arrange(desc(value)) %>% filter(n>1000)
+
 min=df_rochette_grey%>% count(value) %>% arrange(value) %>% filter(n>1000)
+
 light_surface=df_rochette_grey%>% filter(value==max[1,1])
 dark_surface=df_rochette_grey%>% filter(value==min[1,1])
 ggplot()  + geom_point(data=light_surface, aes(x=x, y=y), colour="yellow")  + geom_point(data=dark_surface, aes(x=x, y=y),colour="black") +scale_y_reverse()
 
-```
-nice! so yellow portions indicate signs of sunligth and black portions indicate darker regions. This really useful to scan a given environemt. However, we still havent had our gps examine which are rocky surfaces, we can try adding geom smooth perhaps. 
-
-```{r}
 ggplot()  + geom_point(data=light_surface, aes(x=x, y=y), colour="yellow")  + geom_point(data=dark_surface, aes(x=x, y=y),colour="black") +scale_y_reverse() + geom_smooth(data=light_surface, method=lm,aes(x=x, y=y), colour="blue",size=4,alpha=7)+ geom_smooth(data=dark_surface,method=lm, aes(x=x, y=y), colour="red",size=4,alpha=7)
 
 ```
-
-seems to work, lets say for now, we avoid driving over the area between the blue and red lines. Meaning that any coordinate outside this zone is safe. if we can identify the equation for the regression line than we can identify safe coordinates! 
+mapping out relative position to obstacles/potetnial specimens
 ```{r}
+max_dark_regions=directions%>%filter(kColours=="#72502C")%>% group_by(dir)%>%count(kColours) %>% arrange(desc(n))
+first_dark_region=as.character(max_dark_regions[1:2,][1,1]) 
+second_dark_region=as.character(max_dark_regions[1:2,][2,1])
+mean_pos_first_dark_region=directions %>% filter(dir==first_dark_region)%>% summarise(x=mean(x),y=mean(y))
+
+mean_pos_second_dark_region=directions %>% filter(dir==second_dark_region)%>% summarise(x=mean(x),y=mean(y))
+
+centre=cbind(x=maxX,y=maxY)
+rover=cbind(x=maxX,y=0)
+relative_pos=cbind(rbind(centre,rover,mean_pos_first_dark_region,mean_pos_second_dark_region),objects=c("centre","rover","target1","target2"))
+ggplot(relative_pos,aes(x,y,label=objects))+geom_point()+geom_label()
+
+#vector and nework analysis 
+library(igraph)
+target1_fromrover_vector=sqrt(((relative_pos$x[3]-relative_pos$x[2])^2)+((relative_pos$y[3])^2))
+target2_fromrover_vector=sqrt(((relative_pos$x[4]-relative_pos$x[2])^2)+((relative_pos$y[4])^2))
+centre_vector_fromrover=sqrt(((relative_pos$x[1]-relative_pos$x[2])^2)+((relative_pos$y[1])^2))
+#need to also do for centre to traget not just rover to target 
+g4=graph_from_literal(centre---target2,centre---rover,centre---target1,rover---target1, rover---target2, target1---target2)
+plot(g4)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+below are just extra thought processes
+```{r}
+
 m1<-lm(y~x, dark_surface)
 #slope 
 m1[1][[1]][[2]]
@@ -73,6 +144,6 @@ if (degree>0 && degree<90) {
   print("obstacles ahead, alternative route not found")
 }
 
-#maybe instead of thinking just about angles, consider intersection point??
+#maybe instead of thinking just about angles, consider intersection point??  
 ```
 
