@@ -1,5 +1,5 @@
 ---
-title: "NASA pls hire me"
+title: "Mars rover vision design"
 author: "potential NASA employee"
 date: "17/11/2021"
 output: html_document
@@ -9,58 +9,28 @@ first step: load libraries and image to be analysed
 library(purrr)
 library(tidyverse)
 library(imager)
+library(broman)#for converting hex colour format to numerical
 
-rochette=load.image("https://mars.nasa.gov/system/resources/detail_files/26227_PIA24839_Main_stretched-web.jpg")
+rochette=load.image("https://mars.nasa.gov/system/resources/detail_files/26227_PIA24839_Main_stretched-web.jpg") #saved as an array
 
 ```
 
-quick plot of image and dave as dataframe
+we can plot the image with the base plot function but if we want to plot with ggplot and manipulate aesthetics, it is necessary that we first convert the image into a data frame with rgb values.
 ```{r}
 plot(rochette)
 df_rochette <-as.data.frame(rochette,wide="c") %>% mutate(rgb.val=rgb(c.1,c.2,c.3))
 ggplot()  + geom_raster(data=df_rochette, aes(x=x, y=y, fill=rgb.val)) +scale_fill_identity()+scale_y_reverse()
 
 ```
-
-
-
+Our first goal is to figure which areas have sunlight and which ones are darker. One way to figure out contrasts is to print picture in monochrome and then determine shades at extreme values(for example 0 for darkest shade and 1 for lightest shade)
 ```{r}
-kClusters <- 2
-kMeans <- kmeans(df_rochette[, c("c.1", "c.2", "c.3")], centers = kClusters)
-kColours <- rgb(kMeans$centers[kMeans$cluster,])
+df_rochette_grey <- as.data.frame(rochette) #this will automatically result in a monochromatic image as we did not specify rgb values
 
-combined<-cbind(df_rochette,kColours)
-ggplot(data = combined, aes(x = x, y = y)) + 
-  geom_point(colour = kColours) +
-  labs(title = paste("k-Means Clustering of", kClusters, "Colours")) +
-  xlab("x") +
-  ylab("y") + scale_y_reverse()
-```
-```{r}
-maxX=max(combined$x)/2
-maxY=max(combined$y)/2
+ggplot()  + geom_raster(data=df_rochette_grey, aes(x=x, y=y, fill=value)) +scale_y_reverse()+scale_fill_gradientn(colours=c("black","grey"))
 
-directions=combined%>% mutate(dir = case_when(x <maxX & y<maxY ~ "northwest",x >maxX & y<maxY ~ "northeast", x <maxX & y>maxY ~ "southwest",x >maxX & y>maxY ~ "southeast")) 
+#this is good but we still don't want a gradient, we just want extremes of light and dark shades.so let's try to extract the maximum and minumum valued shades.
 
-ggplot(data = directions, aes(x = x, y = y)) + geom_point(colour = kColours) +  
-labs(title = paste("k-Means Clustering of", kClusters, "Colours")) +
-xlab("x") +
-ylab("y") + scale_y_reverse()+facet_wrap(~dir)
-
-ggplot(directions,aes(kColours))+geom_bar() +facet_wrap(~dir)
-
-#B29168 reflects light areas and #72502C reflects dark areas 
-
-#in this case it is perhaps safest to head northwest considering that lighter areas ouweight darker regions. indicative of smaller and fewer obstacles. also best for sunlighht. northwest is potentially a danger zone as dark and light cshades are almost equal indicative of large rocks. 
-```
-
-Another perspective:
-
-```{r}
-df_rochette_grey <- as.data.frame(rochette)
-ggplot()  + geom_raster(data=df_rochette_grey, aes(x=x, y=y, fill=value)) +scale_y_reverse()
-
-max=df_rochette_grey%>% count(value) %>% arrange(desc(value)) %>% filter(n>1000)
+max=df_rochette_grey%>% count(value) %>% arrange(desc(value)) %>% filter(n>1000)#this filtering for points above 1000 is necessary because we need enough data points of a shade to plot a viable image. it is not really useful if our output image has only a few data points 
 
 min=df_rochette_grey%>% count(value) %>% arrange(value) %>% filter(n>1000)
 
@@ -68,82 +38,126 @@ light_surface=df_rochette_grey%>% filter(value==max[1,1])
 dark_surface=df_rochette_grey%>% filter(value==min[1,1])
 ggplot()  + geom_point(data=light_surface, aes(x=x, y=y), colour="yellow")  + geom_point(data=dark_surface, aes(x=x, y=y),colour="black") +scale_y_reverse()
 
-ggplot()  + geom_point(data=light_surface, aes(x=x, y=y), colour="yellow")  + geom_point(data=dark_surface, aes(x=x, y=y),colour="black") +scale_y_reverse() + geom_smooth(data=light_surface, method=lm,aes(x=x, y=y), colour="blue",size=4,alpha=7)+ geom_smooth(data=dark_surface,method=lm, aes(x=x, y=y), colour="red",size=4,alpha=7)
-
+ggplot()  + geom_point(data=light_surface, aes(x=x, y=y), colour="yellow")  + geom_point(data=dark_surface, aes(x=x, y=y),colour="black") +scale_y_reverse() + geom_smooth(data=light_surface, method=lm,aes(x=x, y=y), colour="blue",size=4,alpha=7)+ geom_smooth(data=dark_surface,method=lm, aes(x=x, y=y), colour="red",size=4,alpha=7)#add geom smooth to approximate dark and light points. 
 ```
-mapping out relative position to obstacles/potetnial specimens
+
+Issue with above technique is that if we pick simply to produce a monochromatic "grey" image, we get a gradient of shades (from super dark to super light) which produces too much noise. However, we tried finding extreme values and this may have had the opposite effect of reducing potentially valuable information. k means clustering may then be a compromise for the above two methods. 
+
 ```{r}
-max_dark_regions=directions%>%filter(kColours=="#72502C")%>% group_by(dir)%>%count(kColours) %>% arrange(desc(n))
+
+df_rochette_blur <-as.data.frame(isoblur(rochette,1),wide="c") %>% mutate(rgb.val=rgb(c.1,c.2,c.3))
+kClusters <- 2
+kMeans <- kmeans(df_rochette_blur[, c("c.1", "c.2", "c.3")], centers = kClusters)
+kColours <- rgb(kMeans$centers[kMeans$cluster,])
+
+combined<-cbind(df_rochette_blur,kColours)
+ggplot(data = combined, aes(x = x, y = y)) + 
+  geom_point(colour = kColours) +
+  labs(title = paste("k-Means Clustering of", kClusters, "Colours")) +
+  xlab("x") +
+  ylab("y") + scale_y_reverse()
+#calculate mean light and dark areas
+```
+The above looks good as we have managed to denoise slightly but also preserved crucial detail. The next step is to translate image-based data into executable direction-based instruction.  we could start by dividing our image data frame into four grids:northwest,northeast,southeast and southwest
+
+```{r}
+maxX=max(combined$x)/2
+maxY=max(combined$y)/2
+
+directions=combined%>% mutate(dir = case_when(x <maxX & y<maxY ~ "northwest",x >maxX & y<maxY ~ "northeast", x <maxX & y>maxY ~ "southwest",x >maxX & y>maxY ~ "southeast")) 
+
+directions$kColours<- hex2dec(str_sub(directions$kColours, 2)) #convert hex format to decimal to make it easier to determine which is the lighter and darker shade.
+
+light=unique(directions$kColours)[1] #higher values reflect lighter shades.
+dark=unique(directions$kColours)[2]
+
+directions<-directions%>%mutate(shade=case_when(directions$kColours==dark~"dark",directions$kColours==light~"light"))
+
+ggplot(data = directions, aes(x = x, y = y)) + geom_point(colour = kColours) +  
+labs(title = paste("k-Means Clustering of", kClusters, "Colours")) +
+xlab("x") +
+ylab("y") + scale_y_reverse()+facet_wrap(~dir)
+
+ggplot(subset(directions, !is.na(dir)),aes(shade,fill=shade))+geom_bar() + scale_fill_manual(values = c("black", "yellow"))+facet_wrap(~dir)+coord_polar() + xlab(NULL)+ ylab(NULL)+theme(axis.text = element_blank(),
+          axis.ticks = element_blank(),
+          panel.grid  = element_blank())
+
+
+most_sun=directions%>%group_by(directions$dir) %>% filter(shade=="light")%>%count()%>% arrange(desc(n))
+most_specimens=directions%>%group_by(directions$dir) %>% filter(shade=="dark")%>%count()%>% arrange(desc(n))
+print(paste("for maximum sunlight, head:",most_sun[1,1],"and for potential specimen collection,head:",most_specimens[1,1]))
+```
+
+we can improve on the above strategy to identify specifically where our target specimen/obstacles are located by figuring out where (in terms of x and y coordinates) "darkest" and "lightest" data points are mostly clustered. 
+
+```{r}
+#dark regions mean coords 
+max_dark_regions=directions%>%filter(kColours==unique(directions$kColours)[2])%>% group_by(dir)%>%count(kColours) %>% arrange(desc(n))
 first_dark_region=as.character(max_dark_regions[1:2,][1,1]) 
 second_dark_region=as.character(max_dark_regions[1:2,][2,1])
 mean_pos_first_dark_region=directions %>% filter(dir==first_dark_region)%>% summarise(x=mean(x),y=mean(y))
-
 mean_pos_second_dark_region=directions %>% filter(dir==second_dark_region)%>% summarise(x=mean(x),y=mean(y))
 
+#light regions mean coords 
+max_light_regions=directions%>%filter(kColours==unique(directions$kColours)[1])%>% group_by(dir)%>%count(kColours) %>% arrange(desc(n))
+first_light_region=as.character(max_light_regions[1:2,][1,1]) 
+second_light_region=as.character(max_light_regions[1:2,][2,1])
+mean_pos_first_light_region=directions %>% filter(dir==first_light_region)%>% summarise(x=mean(x),y=mean(y))
+mean_pos_second_light_region=directions %>% filter(dir==second_light_region)%>% summarise(x=mean(x),y=mean(y))
+
+#centre and rover coords 
 centre=cbind(x=maxX,y=maxY)
 rover=cbind(x=maxX,y=0)
-relative_pos=cbind(rbind(centre,rover,mean_pos_first_dark_region,mean_pos_second_dark_region),objects=c("centre","rover","target1","target2"))
-ggplot(relative_pos,aes(x,y,label=objects))+geom_point()+geom_label()
 
+#merge all coords from above 
+relative_pos=cbind(rbind(centre,rover,mean_pos_first_dark_region,mean_pos_second_dark_region,mean_pos_first_light_region,mean_pos_second_light_region),objects=c("centre","rover","specimen1","specimen2","sun1","sun2"))
+
+ggplot(relative_pos,aes(x,y,label=objects))+geom_point()+geom_label()
+```
+
+preparing to apply graph theory by first determining relative distances
+```{r}
 #vector and nework analysis 
 library(igraph)
-target1_fromrover_vector=sqrt(((relative_pos$x[3]-relative_pos$x[2])^2)+((relative_pos$y[3])^2))
-target2_fromrover_vector=sqrt(((relative_pos$x[4]-relative_pos$x[2])^2)+((relative_pos$y[4])^2))
-centre_vector_fromrover=sqrt(((relative_pos$x[1]-relative_pos$x[2])^2)+((relative_pos$y[1])^2))
-#need to also do for centre to traget not just rover to target 
-g4=graph_from_literal(centre---target2,centre---rover,centre---target1,rover---target1, rover---target2, target1---target2)
-plot(g4)
 
-```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-below are just extra thought processes
-```{r}
-
-m1<-lm(y~x, dark_surface)
-#slope 
-m1[1][[1]][[2]]
-#intercept:
-m1[1][[1]][[1]]
-
-m2<-lm(y~x, light_surface)
-#slope 
-m2[1][[1]][[2]]
-#intercept:
-m2[1][[1]][[1]]
-
-#equation for angle between the twp regression lines. equation is arctan of (slope1-slope2)/ 1 + (slope1*slope2)
-
-degree=atan((m1[1][[1]][[2]]-m2[1][[1]][[2]])/(1+(m1[1][[1]][[2]]*m2[1][[1]][[2]])))
-
-#we have a super small degree which lies in the upper right quadrant, so our rover can move in any other quadrant. 
-degree=degree*-1
-
-if (degree>0 && degree<90) {
-  print("obstacles mostly located in upper right quadrant, take sharp right turn now or turn left")
-}else if (degree==0) {
-  print("obstacles ahead, alternative route not found")
+pythagoras<-function(point1,point2){
+  first=which(str_detect(relative_pos$objects,as.character(point1)))
+   second=which(str_detect(relative_pos$objects,as.character(point2)))
+   round(sqrt(abs(((relative_pos$x[first]-relative_pos$x[second])^2))+(abs(relative_pos$y[first]-relative_pos$y[second])^2))/100,0)
 }
 
-#maybe instead of thinking just about angles, consider intersection point??  
+rover_to_specimen1_vector=pythagoras("rover","specimen1")
+rover_to_specimen2_vector=pythagoras("rover","specimen2")
+rover_to_sun1_vector=pythagoras("rover","sun1")
+rover_to_sun2_vector=pythagoras("rover","sun2")
+
+rover_to_centre_vector=pythagoras("rover","centre")
+centre_to_specimen1_vector=pythagoras("centre","specimen1")
+centre_to_specimen2_vector=pythagoras("centre","specimen2")
+centre_to_sun1_vector=pythagoras("centre","sun1")
+centre_to_sun2_vector=pythagoras("centre","sun2")
+specimen1_to_specimen2_vector=pythagoras("specimen1","specimen2")
+sun1_to_sun2_vector=pythagoras("sun1","sun2")
+specimen1_to_sun1_vector=pythagoras("specimen1","sun1")
+specimen1_to_sun2_vector=pythagoras("specimen1","sun2")
+specimen2_to_sun1_vector=pythagoras("specimen2","sun1")
+specimen2_to_sun2_vector=pythagoras("specimen2","sun2")
 ```
 
+applying graph theory. graphs are made up of vertices and edges. edges can be thought of as target locations/objects present in the environment while vertices are the connections between these edges. Some edges have greater connection weights (greater distance/energy cost in our case) between them as compared to other edges. Our goal is to figure out which edges are easy for our rover to travel to depending on its mission.
+```{r}
+N=15 #number of vertices
+relations <- data.frame(from=c("rover","rover","rover","rover","rover","specimen1","centre","centre","centre","centre","sun1","specimen1","specimen1","specimen2","specimen2"),                    to=c("specimen1","specimen2","centre","sun1","sun2","specimen2","specimen2","specimen1","sun1","sun2","sun2","sun1","sun2","sun1","sun2"),weight=c(rover_to_specimen1_vector,rover_to_specimen2_vector,rover_to_centre_vector,rover_to_sun1_vector,rover_to_sun2_vector, specimen1_to_specimen2_vector,centre_to_specimen2_vector,centre_to_specimen1_vector,centre_to_sun1_vector,centre_to_sun2_vector,sun1_to_sun2_vector,specimen1_to_sun1_vector,specimen1_to_sun2_vector,specimen2_to_sun1_vector,specimen2_to_sun2_vector)) 
+
+objects <- data.frame(name=c("rover", "specimen1", "specimen2", "centre","sun1","sun2"))
+g <- graph_from_data_frame(relations, directed=FALSE, vertices=objects)
+E(g)$weight<-relations$weight
+distances(g) #sanitycheck
+weighted.path <- unlist(get.shortest.paths(g, from = "rover", to="sun2")$vpath) 
+same.shape <- layout_with_fr(g)
+E(g)$color <- "gray"
+E(g, path=weighted.path)$color <- "red"
+plot(g, vertex.color=V(g), edge.weight=2, vertex.label.cex = 1.5, edge.width=(E(g)$weight),edge.label=(E(g)$weight),edge.label.cex=1,vertex.size=30,vertex.label.dist=4,layout=same.shape)
+```
+
+future directions: blob detection of each rock/specimen so a clear route can be established 
